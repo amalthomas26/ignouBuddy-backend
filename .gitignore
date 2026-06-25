@@ -16,3 +16,4 @@ logs/
 # Markdown files
 *.md
 !README.md
+/generated/prisma

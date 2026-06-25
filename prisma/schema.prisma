@@ -1,0 +1,487 @@
+// IGNOU Buddy — Prisma Schema
+// Naming: Models = PascalCase, fields = camelCase
+//         DB tables = snake_case (via @@map), DB columns = snake_case (via @map)
+// PKs:    UUID v4 on every table
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ENUMS
+
+/// Channel through which OTP is delivered
+enum OtpChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+
+  @@map("otp_channel")
+}
+
+/// Status of an assignment submission
+enum AssignmentStatus {
+  PENDING
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  GRADED
+
+  @@map("assignment_status")
+}
+
+/// Type of deadline/alert
+enum DeadlineType {
+  EXAM_FEE
+  ASSIGNMENT_SUBMISSION
+  RE_REGISTRATION
+  EXAM_FORM
+  GENERAL
+
+  @@map("deadline_type")
+}
+
+/// Channel for notification delivery
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  IN_APP
+
+  @@map("notification_channel")
+}
+
+/// Status of a notification delivery attempt
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  RETRYING
+
+  @@map("notification_status")
+}
+
+/// Role in an AI conversation
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+
+  @@map("ai_message_role")
+}
+
+// CORE — Student
+
+/// The primary user of the system. Identified by IGNOU enrollment number.
+model Student {
+  id               String    @id @default(uuid()) @db.Uuid
+  enrollmentNumber String    @unique @map("enrollment_number") @db.VarChar(10)
+  // 9 digits for pre-2020 students, 10 digits for 2020+
+  name             String    @map("name") @db.Text
+  email            String?   @map("email") @db.Text
+  phone            String?   @map("phone") @db.VarChar(15)
+  whatsappNumber   String?   @map("whatsapp_number") @db.VarChar(15)
+  isVerified       Boolean   @default(false) @map("is_verified")
+  isActive         Boolean   @default(true) @map("is_active")
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz()
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz()
+
+  sessions               Session[]
+  otps                   Otp[]
+  enrollments            StudentEnrollment[]
+  assignments            Assignment[]
+  exams                  Exam[]
+  examResults            ExamResult[]
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  aiConversations        AiConversation[]
+  deadlines              Deadline[]
+
+  @@map("students")
+}
+
+// AUTH — Session & OTP (no passwords — OTP-only auth)
+
+/// Server-managed session. Created after successful OTP verification.
+/// The session ID (sid) is stored in an HttpOnly cookie on the client.
+model Session {
+  id             String    @id @default(uuid()) @db.Uuid
+  studentId      String    @map("student_id") @db.Uuid
+  sid            String    @unique @map("sid") @db.VarChar(96)
+  userAgent      String?   @map("user_agent") @db.Text
+  ipAddress      String?   @map("ip_address") @db.VarChar(45)
+  deviceInfo     String?   @map("device_info") @db.Text
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz()
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz()
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz()
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId], map: "idx_sessions_student_id")
+  @@index([expiresAt], map: "idx_sessions_expires_at")
+  @@map("sessions")
+}
+
+/// One-time password for authentication.
+/// Lifecycle: generate → deliver → verify → expire/consume
+model Otp {
+  id          String     @id @default(uuid()) @db.Uuid
+  studentId   String     @map("student_id") @db.Uuid
+  code        String     @map("code") @db.VarChar(6)
+  channel     OtpChannel @map("channel")
+  attempts    Int        @default(0) @map("attempts") @db.SmallInt
+  maxAttempts Int        @default(3) @map("max_attempts") @db.SmallInt
+  isVerified  Boolean    @default(false) @map("is_verified")
+  expiresAt   DateTime   @map("expires_at") @db.Timestamptz()
+  verifiedAt  DateTime?  @map("verified_at") @db.Timestamptz()
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt], map: "idx_otps_student_created")
+  @@index([expiresAt], map: "idx_otps_expires_at")
+  @@map("otps")
+}
+
+// ACADEMIC — Programme, Course, Enrollment
+
+/// An IGNOU programme (degree) like BCA, MCA, BA, etc.
+model Programme {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique @map("code") @db.VarChar(10)
+  name           String   @map("name") @db.Text
+  type           String   @map("type") @db.VarChar(20)
+  // Values: bachelor, master, diploma, certificate, pg_diploma
+  durationYears  Int      @map("duration_years") @db.SmallInt
+  totalSemesters Int      @map("total_semesters") @db.SmallInt
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  courses     Course[]
+  enrollments StudentEnrollment[]
+
+  @@map("programmes")
+}
+
+/// A course within a programme (e.g., MCS-013 "Discrete Mathematics")
+model Course {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @map("code") @db.VarChar(15)
+  name        String   @map("name") @db.Text
+  credits     Int      @map("credits") @db.SmallInt
+  semester    Int      @map("semester") @db.SmallInt
+  maxMarks    Int      @default(100) @map("max_marks") @db.SmallInt
+  programmeId String   @map("programme_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  programme      Programme       @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  assignments    Assignment[]
+  exams          Exam[]
+  examResults    ExamResult[]
+  questionPapers QuestionPaper[]
+
+  @@index([programmeId], map: "idx_courses_programme_id")
+  @@index([programmeId, semester], map: "idx_courses_programme_semester")
+  @@map("courses")
+}
+
+/// IGNOU regional centre (study centre)
+model RegionalCentre {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @map("code") @db.VarChar(10)
+  name      String   @map("name") @db.Text
+  city      String   @map("city") @db.Text
+  state     String   @map("state") @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  enrollments StudentEnrollment[]
+
+  @@map("regional_centres")
+}
+
+/// Links a student to a programme and regional centre for a specific academic year.
+/// A student can have multiple enrollments (e.g., re-enrollment, programme change).
+model StudentEnrollment {
+  id                  String   @id @default(uuid()) @db.Uuid
+  studentId           String   @map("student_id") @db.Uuid
+  programmeId         String   @map("programme_id") @db.Uuid
+  regionalCentreId    String   @map("regional_centre_id") @db.Uuid
+  currentSemester     Int      @map("current_semester") @db.SmallInt
+  academicYear        String   @map("academic_year") @db.VarChar(9)
+  // Format: "2025-2026"
+  isCurrentEnrollment Boolean  @default(true) @map("is_current_enrollment")
+  enrolledAt          DateTime @map("enrolled_at") @db.Timestamptz()
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  student        Student        @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  programme      Programme      @relation(fields: [programmeId], references: [id], onDelete: Restrict)
+  regionalCentre RegionalCentre @relation(fields: [regionalCentreId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, programmeId, academicYear], map: "uq_enrollment_student_programme_year")
+  @@index([studentId], map: "idx_enrollments_student_id")
+  @@index([programmeId], map: "idx_enrollments_programme_id")
+  @@index([regionalCentreId], map: "idx_enrollments_regional_centre_id")
+  @@map("student_enrollments")
+}
+
+// ACADEMIC RECORDS — Assignment, Exam, Result
+
+/// Tracks assignment submissions per student per course per session.
+model Assignment {
+  id          String           @id @default(uuid()) @db.Uuid
+  studentId   String           @map("student_id") @db.Uuid
+  courseId    String           @map("course_id") @db.Uuid
+  session     String           @map("session") @db.VarChar(10)
+  // "June" or "December"
+  year        Int              @map("year") @db.SmallInt
+  status      AssignmentStatus @default(PENDING) @map("status")
+  submittedAt DateTime?        @map("submitted_at") @db.Timestamptz()
+  marks       Int?             @map("marks") @db.SmallInt
+  maxMarks    Int              @default(100) @map("max_marks") @db.SmallInt
+  downloadUrl String?          @map("download_url") @db.Text
+  deadline    DateTime?        @map("deadline") @db.Timestamptz()
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime?        @map("deleted_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, courseId, session, year], map: "uq_assignment_student_course_session")
+  @@index([studentId], map: "idx_assignments_student_id")
+  @@index([courseId], map: "idx_assignments_course_id")
+  @@index([studentId, status], map: "idx_assignments_student_status")
+  @@map("assignments")
+}
+
+/// Exam schedule entry — when and where a student takes an exam.
+model Exam {
+  id            String    @id @default(uuid()) @db.Uuid
+  studentId     String    @map("student_id") @db.Uuid
+  courseId      String    @map("course_id") @db.Uuid
+  session       String    @map("session") @db.VarChar(10)
+  year          Int       @map("year") @db.SmallInt
+  examDate      DateTime? @map("exam_date") @db.Date
+  timeSlot      String?   @map("time_slot") @db.VarChar(20)
+  // "Morning" or "Afternoon"
+  venue         String?   @map("venue") @db.Text
+  hallTicketUrl String?   @map("hall_ticket_url") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, courseId, session, year], map: "uq_exam_student_course_session")
+  @@index([studentId], map: "idx_exams_student_id")
+  @@index([courseId], map: "idx_exams_course_id")
+  @@index([examDate], map: "idx_exams_date")
+  @@map("exams")
+}
+
+/// Result for a specific course in a specific exam session.
+model ExamResult {
+  id            String    @id @default(uuid()) @db.Uuid
+  studentId     String    @map("student_id") @db.Uuid
+  courseId      String    @map("course_id") @db.Uuid
+  session       String    @map("session") @db.VarChar(10)
+  year          Int       @map("year") @db.SmallInt
+  marksObtained Int?      @map("marks_obtained") @db.SmallInt
+  maxMarks      Int       @default(100) @map("max_marks") @db.SmallInt
+  grade         String?   @map("grade") @db.VarChar(2)
+  resultStatus  String    @map("result_status") @db.VarChar(20)
+  // Values: "pass", "fail", "result_awaited"
+  contentHash   String?   @map("content_hash") @db.Char(64)
+  scrapedAt     DateTime? @map("scraped_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, courseId, session, year], map: "uq_result_student_course_session")
+  @@index([studentId], map: "idx_results_student_id")
+  @@index([courseId], map: "idx_results_course_id")
+  @@index([contentHash], map: "idx_results_content_hash")
+  @@map("exam_results")
+}
+
+// QUESTION PAPERS — Archive
+
+/// Archived question paper PDF for a course in a specific exam session.
+model QuestionPaper {
+  id          String   @id @default(uuid()) @db.Uuid
+  courseId    String   @map("course_id") @db.Uuid
+  session     String   @map("session") @db.VarChar(10)
+  year        Int      @map("year") @db.SmallInt
+  pdfUrl      String   @map("pdf_url") @db.Text
+  sourceUrl   String?  @map("source_url") @db.Text
+  contentHash String?  @map("content_hash") @db.Char(64)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([courseId, session, year], map: "uq_question_paper_course_session")
+  @@index([courseId], map: "idx_question_papers_course_id")
+  @@map("question_papers")
+}
+
+// DEADLINES & ALERTS
+
+/// A deadline or alert — system-wide (studentId = null) or student-specific.
+model Deadline {
+  id          String       @id @default(uuid()) @db.Uuid
+  studentId   String?      @map("student_id") @db.Uuid
+  type        DeadlineType @map("type")
+  title       String       @map("title") @db.Text
+  description String?      @map("description") @db.Text
+  dueDate     DateTime     @map("due_date") @db.Timestamptz()
+  actionUrl   String?      @map("action_url") @db.Text
+  isRead      Boolean      @default(false) @map("is_read")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+
+  student Student? @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@index([studentId], map: "idx_deadlines_student_id")
+  @@index([dueDate], map: "idx_deadlines_due_date")
+  @@index([type, dueDate], map: "idx_deadlines_type_due_date")
+  @@map("deadlines")
+}
+
+// NOTIFICATIONS
+
+/// Student's notification channel preferences.
+/// One row per student (1:1 relation).
+model NotificationPreference {
+  id              String   @id @default(uuid()) @db.Uuid
+  studentId       String   @unique @map("student_id") @db.Uuid
+  emailEnabled    Boolean  @default(true) @map("email_enabled")
+  whatsappEnabled Boolean  @default(false) @map("whatsapp_enabled")
+  inAppEnabled    Boolean  @default(true) @map("in_app_enabled")
+  resultAlerts    Boolean  @default(true) @map("result_alerts")
+  deadlineAlerts  Boolean  @default(true) @map("deadline_alerts")
+  examAlerts      Boolean  @default(true) @map("exam_alerts")
+  generalAlerts   Boolean  @default(true) @map("general_alerts")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+/// A single notification delivery record.
+/// Tracks every attempt to deliver a message to a student.
+model Notification {
+  id          String              @id @default(uuid()) @db.Uuid
+  studentId   String?             @map("student_id") @db.Uuid
+  channel     NotificationChannel @map("channel")
+  status      NotificationStatus  @default(PENDING) @map("status")
+  subject     String              @map("subject") @db.Text
+  body        String              @map("body") @db.Text
+  recipient   String              @map("recipient") @db.Text
+  attempts    Int                 @default(0) @map("attempts") @db.SmallInt
+  maxAttempts Int                 @default(3) @map("max_attempts") @db.SmallInt
+  lastError   String?             @map("last_error") @db.Text
+  sentAt      DateTime?           @map("sent_at") @db.Timestamptz()
+  deliveredAt DateTime?           @map("delivered_at") @db.Timestamptz()
+  failedAt    DateTime?           @map("failed_at") @db.Timestamptz()
+  scheduledAt DateTime?           @map("scheduled_at") @db.Timestamptz()
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime?           @map("deleted_at") @db.Timestamptz()
+
+  student Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  @@index([studentId], map: "idx_notifications_student_id")
+  @@index([status], map: "idx_notifications_status")
+  @@index([channel, status], map: "idx_notifications_channel_status")
+  @@index([scheduledAt], map: "idx_notifications_scheduled_at")
+  @@map("notifications")
+}
+
+// AI ASSISTANT
+
+/// An AI conversation session with a student.
+model AiConversation {
+  id           String   @id @default(uuid()) @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  title        String?  @map("title") @db.Text
+  context      Json?    @map("context") @db.JsonB
+  messageCount Int      @default(0) @map("message_count") @db.SmallInt
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  student  Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@index([studentId, createdAt], map: "idx_ai_conversations_student_created")
+  @@map("ai_conversations")
+}
+
+/// A single message in an AI conversation.
+model AiMessage {
+  id             String        @id @default(uuid()) @db.Uuid
+  conversationId String        @map("conversation_id") @db.Uuid
+  role           AiMessageRole @map("role")
+  content        String        @map("content") @db.Text
+  tokenCount     Int?          @map("token_count")
+  modelUsed      String?       @map("model_used") @db.VarChar(50)
+  latencyMs      Int?          @map("latency_ms")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt], map: "idx_ai_messages_conversation_created")
+  @@map("ai_messages")
+}
+
+// SCRAPER — Raw scraped data from IGNOU portals
+
+/// Stores raw + parsed data from IGNOU portal scraping.
+/// raw_payload = immutable source of truth (what IGNOU returned).
+/// parsed_payload = normalized output of the parser (derived from raw).
+model ScrapedData {
+  id            String    @id @default(uuid()) @db.Uuid
+  enrollmentNo  String    @map("enrollment_no") @db.VarChar(10)
+  dataType      String    @map("data_type") @db.VarChar(20)
+  // Values: "result", "hallticket", "assignment", "notice"
+  programmeCode String?   @map("programme_code") @db.VarChar(10)
+  session       String?   @map("session") @db.VarChar(10)
+  year          Int?      @map("year") @db.SmallInt
+  sourceUrl     String    @map("source_url") @db.Text
+  contentHash   String    @map("content_hash") @db.Char(64)
+  rawPayload    Json      @map("raw_payload") @db.JsonB
+  parsedPayload Json?     @map("parsed_payload") @db.JsonB
+  scrapeStatus  String    @default("pending") @map("scrape_status") @db.VarChar(20)
+  // Values: "pending", "success", "failed", "skipped"
+  attempts      Int       @default(0) @map("attempts") @db.SmallInt
+  lastError     String?   @map("last_error") @db.Text
+  scrapedAt     DateTime? @map("scraped_at") @db.Timestamptz()
+  checkedAt     DateTime  @default(now()) @map("checked_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz()
+
+  @@unique([enrollmentNo, dataType, session, year], map: "uq_scraped_data_enrollment_type_session")
+  @@index([enrollmentNo], map: "idx_scraped_data_enrollment_no")
+  @@index([contentHash], map: "idx_scraped_data_content_hash")
+  @@index([scrapeStatus], map: "idx_scraped_data_status")
+  @@index([dataType, scrapedAt], map: "idx_scraped_data_type_scraped_at")
+  @@map("scraped_data")
+}
