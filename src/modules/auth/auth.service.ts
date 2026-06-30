@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { OtpChannel } from '@prisma/client';
-import { OtpService } from '../../otp/otp.service';
-import { SessionService } from '../../session/session.service';
-import { StudentService } from '../../student/student.service';
-import { AuthResult, RequestMetadata } from '../auth.types';
+import { OtpService } from '../otp/otp.service';
+import { SessionService } from '../session/session.service';
+import { StudentService } from '../student/student.service';
+import { AuthResult, RequestMetadata } from './auth.types';
 
 //orchestrates the authentication flow
 //delegates to otpservice,sessionservice,and studentservice.

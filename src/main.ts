@@ -33,6 +33,10 @@ async function bootstrap(): Promise<void> {
     threshold: 1024, // Only compress responses > 1KB
   });
 
+  await app.register(import('@fastify/cookie'), {
+    secret: process.env.SESSION_SECRET,
+  });
+
   app.enableCors({
     origin: process.env.ALLOWED_ORIGINS?.split(',') ?? [
       'http://localhost:3001',
