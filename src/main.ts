@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.register(import('@fastify/cookie'), {
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET,///Signs cookies to prevent tampering
   });
 
   app.enableCors({
