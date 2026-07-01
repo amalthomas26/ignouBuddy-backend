@@ -13,7 +13,7 @@ export class AcademicRepository {
 
   //programmes
 
-  async findAllProgramme(): Promise<Programme[]> {
+  async findAllProgrammes(): Promise<Programme[]> {
     return this.prisma.programme.findMany({
       where: { isActive: true },
       orderBy: { code: 'asc' },
@@ -72,7 +72,7 @@ export class AcademicRepository {
 
   //student enrollment
 
-  async findCurrrentEnrollment(studentId: string): Promise<
+  async findCurrentEnrollment(studentId: string): Promise<
     | (StudentEnrollment & {
         programme: Programme;
         regionalCentre: RegionalCentre;
